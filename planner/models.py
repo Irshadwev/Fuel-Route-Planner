@@ -10,7 +10,7 @@ class FuelStation(models.Model):
     state = models.CharField(max_length=10)
     price = models.FloatField()  # price per gallon
 
-    # Map pin, added by the load_stations command (Step 3)
+    # Map pin, added by the load_stations command 
     latitude = models.FloatField()
     longitude = models.FloatField()
 
