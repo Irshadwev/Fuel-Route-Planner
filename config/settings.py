@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 """
 
 from pathlib import Path
+from decouple import config
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -21,6 +22,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = 'django-insecure-(15_8ncusy30d3mso7&vm%7nn4mp*d%1qds^6ztr59_bzj)s2n'
+
+# Geoapify API key loaded securely from the .env file.
+GEOAPIFY_API_KEY = config("GEOAPIFY_API_KEY")
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
