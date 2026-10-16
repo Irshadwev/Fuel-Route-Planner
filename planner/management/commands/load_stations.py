@@ -17,26 +17,37 @@ HEADERS = {"User-Agent": "FuelRoutePlannerAssessment/1.0"}
 
 def geocode_city(city, state, cache):
     """Get the map pin for one city. Save every answer in the cache
-    file, so we never ask the map service the same city twice."""
+    file, so we never ask the map service the same city twice.
+    If the network fails, try again 3 times. If it still fails,
+    return None but do NOT save the failure in the cache, so the
+    next run will try this city again."""
     key = f"{city}, {state}"
     if key in cache:
         return cache[key]
 
-    response = requests.get(
-        NOMINATIM_URL,
-        params={"q": f"{city}, {state}, USA", "format": "json", "limit": 1},
-        headers=HEADERS,
-        timeout=15,
-    )
-    results = response.json()
-    if results:
-        cache[key] = [float(results[0]["lat"]), float(results[0]["lon"])]
-    else:
-        cache[key] = None
+    for attempt in range(3):
+        try:
+            response = requests.get(
+                NOMINATIM_URL,
+                params={"q": f"{city}, {state}, USA", "format": "json", "limit": 1},
+                headers=HEADERS,
+                timeout=30,
+            )
+            response.raise_for_status()
+            results = response.json()
+            if results:
+                cache[key] = [float(results[0]["lat"]), float(results[0]["lon"])]
+            else:
+                cache[key] = None
+            CACHE_PATH.write_text(json.dumps(cache))  # save progress every time
+            time.sleep(1.1)  # Nominatim rule: maximum 1 request per second
+            return cache[key]
+        except requests.RequestException:
+            print(f"Network problem for {key}, trying again ({attempt + 1}/3)...")
+            time.sleep(5)
 
-    CACHE_PATH.write_text(json.dumps(cache))  # save progress every time
-    time.sleep(1.1)  # Nominatim rule: maximum 1 request per second
-    return cache[key]
+    return None
+
 
 
 class Command(BaseCommand):
