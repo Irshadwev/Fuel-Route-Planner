@@ -5,9 +5,11 @@ from pathlib import Path
 
 import requests
 from django.conf import settings
+from django.core.cache import cache
 from django.core.management.base import BaseCommand
 
 from planner.models import FuelStation
+from planner.services.us import US_STATE_CODES
 
 CSV_PATH = Path(settings.BASE_DIR) / "dataset" / "fuel-prices.csv"
 CACHE_PATH = Path(settings.BASE_DIR) / "dataset" / "geocode_cache.json"
@@ -63,6 +65,7 @@ class Command(BaseCommand):
         seen_ids = set()
         saved = 0
         skipped = 0
+        non_us = 0
 
         for row in rows:
             station_id = row["OPIS Truckstop ID"].strip()
@@ -78,6 +81,9 @@ class Command(BaseCommand):
 
             city = row["City"].strip()
             state = row["State"].strip()
+            if state not in US_STATE_CODES:
+                non_us += 1
+                continue
             coords = geocode_city(city, state, cache)
             if coords is None:
                 skipped += 1
@@ -93,12 +99,15 @@ class Command(BaseCommand):
                     "price": price,
                     "latitude": coords[0],
                     "longitude": coords[1],
+                    "location_source": "city_centroid",
                 },
             )
             saved += 1
             if saved % 100 == 0:
                 self.stdout.write(f"Saved {saved} stations...")
 
+        # A newly loaded price file must not leave a completed plan cached.
+        cache.clear()
         self.stdout.write(self.style.SUCCESS(
-            f"Done. Saved: {saved}, Skipped: {skipped}"
+            f"Done. Saved: {saved}, Skipped: {skipped}, Non-US: {non_us}"
         ))

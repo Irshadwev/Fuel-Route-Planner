@@ -1,80 +1,122 @@
-import math
+"""Cost-optimal fuel purchasing for stations ordered along one route."""
 
 MPG = 10
 MAX_RANGE_MILES = 500
+TANK_CAPACITY_GALLONS = MAX_RANGE_MILES / MPG
+INITIAL_STATION_WINDOW_MILES = 25
+POSITION_PRECISION_MILES = 0.01
+EPSILON = 1e-8
 
 
 def optimise_fuel_stops(stations, route_miles):
-    """
-    Pick the cheapest sequence of fuel stops for the trip.
+    """Choose fuel purchases that minimise the total price paid.
 
-    Rules:
-    - The car starts with a full tank bought at the cheapest station
-      near the start (within the first 25 route miles).
-    - The car can never drive more than 500 miles between stops.
-    - Every leg costs (leg miles / MPG) x price at the leg's start station.
+    The driver starts empty at the cheapest supplied station near the origin.
+    At each station, the standard optimal policy is used: buy just enough to
+    reach the first cheaper reachable station; if none exists, fill only as
+    much as needed to reach the destination or the 500-mile tank capacity.
+    Fuel already in the tank is carried forward, which is essential for true
+    price optimisation and was not modelled by the original leg-cost DP.
 
-    Return None if no valid plan exists.
+    Returns ``None`` when the station data cannot make the route with a
+    500-mile maximum range.
     """
-    if not stations:
+    if route_miles <= 0 or not stations:
         return None
 
-    # The starting station: cheapest one in the first 25 miles.
-    start_candidates = [s for s in stations if s["route_mile"] <= 25]
+    start_candidates = [
+        station for station in stations
+        if station["route_mile"] <= INITIAL_STATION_WINDOW_MILES
+    ]
     if not start_candidates:
         return None
-    start_station = min(start_candidates, key=lambda s: s["price"])
-    start_station = {**start_station, "route_mile": 0.0}
 
-    # Stations in the middle of the trip. If two stations are at the
-    # same position (same city), keep only the cheaper one.
-    by_position = {}
-    for station in stations:
-        if 0.1 < station["route_mile"] < route_miles:
-            key = round(station["route_mile"], 2)
-            if key not in by_position or station["price"] < by_position[key]["price"]:
-                by_position[key] = station
-    nodes = [start_station] + sorted(
-        by_position.values(), key=lambda s: s["route_mile"]
-    )
+    initial_fill = min(start_candidates, key=lambda station: station["price"])
+    initial_fill = {**initial_fill, "route_mile": 0.0}
+    nodes = [initial_fill] + _deduplicated_route_stations(stations, route_miles)
     destination_index = len(nodes)
 
-    # Dynamic programming, working backwards from the destination:
-    # best[i] = the cheapest cost to finish the trip from station i.
-    best = [float("inf")] * (len(nodes) + 1)
-    next_node = [None] * (len(nodes) + 1)
-    best[destination_index] = 0.0
+    fuel_in_tank = 0.0
+    total_gallons = 0.0
+    total_cost = 0.0
+    purchases = []
 
-    for i in range(len(nodes) - 1, -1, -1):
-        current_position = nodes[i]["route_mile"]
-        for j in range(i + 1, destination_index + 1):
-            next_position = (
-                route_miles if j == destination_index else nodes[j]["route_mile"]
-            )
-            leg_miles = next_position - current_position
-            if leg_miles > MAX_RANGE_MILES:
-                break
-            segment_cost = (leg_miles / MPG) * nodes[i]["price"]
-            total_cost = segment_cost + best[j]
-            if total_cost < best[i]:
-                best[i] = total_cost
-                next_node[i] = j
+    for index, station in enumerate(nodes):
+        station_mile = station["route_mile"]
+        distance_to_destination = route_miles - station_mile
+        if distance_to_destination < -EPSILON:
+            return None
 
-    if not math.isfinite(best[0]):
+        next_mile = (
+            route_miles if index + 1 == destination_index
+            else nodes[index + 1]["route_mile"]
+        )
+        distance_to_next = next_mile - station_mile
+        if distance_to_next > MAX_RANGE_MILES + EPSILON:
+            return None
+        if distance_to_next < -EPSILON:
+            return None
+
+        target_gallons = _target_fuel_gallons(
+            index, nodes, route_miles, station_mile
+        )
+        if target_gallons > TANK_CAPACITY_GALLONS + EPSILON:
+            return None
+
+        gallons_to_buy = max(0.0, target_gallons - fuel_in_tank)
+        if gallons_to_buy > EPSILON:
+            purchase_cost = gallons_to_buy * station["price"]
+            purchase = {
+                **station,
+                "gallons_purchased": gallons_to_buy,
+                "fuel_cost": purchase_cost,
+            }
+            purchases.append(purchase)
+            fuel_in_tank += gallons_to_buy
+            total_gallons += gallons_to_buy
+            total_cost += purchase_cost
+
+        fuel_required_for_next = distance_to_next / MPG
+        if fuel_in_tank + EPSILON < fuel_required_for_next:
+            return None
+        fuel_in_tank = max(0.0, fuel_in_tank - fuel_required_for_next)
+
+    if not purchases:
         return None
 
-    # Walk forward from the start, collecting the chosen stops.
-    stops = []
-    index = 0
-    while index != destination_index:
-        index = next_node[index]
-        if index is None:
-            return None
-        if index != destination_index:
-            stops.append(nodes[index])
-
     return {
-        "initial_fill": start_station,
-        "stops": stops,
-        "estimated_fuel_cost": round(best[0], 2),
+        "initial_fill": purchases[0],
+        "stops": purchases[1:],
+        "estimated_gallons": total_gallons,
+        "estimated_fuel_cost": round(total_cost, 2),
     }
+
+
+def _deduplicated_route_stations(stations, route_miles):
+    """Keep only the cheapest option at each effectively identical position."""
+    by_position = {}
+    for station in stations:
+        route_mile = station["route_mile"]
+        if not (INITIAL_STATION_WINDOW_MILES < route_mile < route_miles):
+            continue
+        key = round(route_mile / POSITION_PRECISION_MILES)
+        current = by_position.get(key)
+        if current is None or station["price"] < current["price"]:
+            by_position[key] = station
+    return sorted(by_position.values(), key=lambda station: station["route_mile"])
+
+
+def _target_fuel_gallons(index, nodes, route_miles, station_mile):
+    """Fuel level to hold after leaving this station under the greedy optimum."""
+    distance_to_destination = route_miles - station_mile
+    if distance_to_destination <= MAX_RANGE_MILES:
+        return distance_to_destination / MPG
+
+    current_price = nodes[index]["price"]
+    for later_station in nodes[index + 1:]:
+        distance = later_station["route_mile"] - station_mile
+        if distance > MAX_RANGE_MILES:
+            break
+        if later_station["price"] < current_price:
+            return distance / MPG
+    return TANK_CAPACITY_GALLONS
