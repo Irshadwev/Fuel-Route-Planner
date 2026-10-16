@@ -42,6 +42,15 @@ Errors: `400` if start/destination is missing or empty, `422` if a
 location or route cannot be found or no valid fuel plan exists,
 `502` if a map service fails.
 
+## Example Map
+New York → Chicago route with the fuel stops selected by the API:
+Fuel-Route-Planner
+
+![Route Map](https://github.com/Irshadwev/Fuel-Route-Planner/Map.png)
+
+
+
+
 ## Setup
 
 ```
@@ -102,3 +111,8 @@ planner/
   tests.py                       unit tests + API tests with mocked map services
 dataset/fuel-prices.csv          supplied fuel price dataset
 ```
+
+## Contributing
+Contributions are welcome! Please open an issue or submit a pull request for any improvements or bug fixes.
+
+Feel free to reach out with questions or suggestions!
